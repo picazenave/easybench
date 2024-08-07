@@ -16,6 +16,12 @@ volatile TRX_struct tx_ring_data[NB_TX_CHANNELS_MAX][TX_RING_SIZE];
 
 extern uint32_t offset_loopback;
 
+union packed_uint32_t
+{
+    uint32_t ui;
+    uint8_t b[4];
+};
+
 int add_tx_ring(TRX_struct _to_add, unsigned int index_channel_TX)
 {
     ring_pos_t next_head = (tx_ring_head[index_channel_TX] + 1) % TX_RING_SIZE;
@@ -109,7 +115,7 @@ unsigned long t0_perfo = 0;
 unsigned long t_perfo = 0, t_perfo_max = 0;
 void unified_task(void *pvParameters)
 {
-    Serial0.println("start A429 task");
+    DEBUG_PORT.println("start A429 task");
     unsigned long t0 = millis();
     for (;;)
     {
@@ -124,7 +130,7 @@ void unified_task(void *pvParameters)
                 get_timestamp(&temp_timestamp);
                 if ((temp_timestamp) >= (offset_init - offset_send_delay + peek_struct_A429.timestamp))
                 {
-                    // Serial0.printf("sent t0:%d at %d|| channel head=%d | channel tail=%d\r\n", peek_struct_A429.timestamp, temp_timestamp - offset_init,tx_ring_head[0], tx_ring_tail[0]);
+                    // DEBUG_PORT.printf("sent t0:%d at %d|| channel head=%d | channel tail=%d\r\n", peek_struct_A429.timestamp, temp_timestamp - offset_init,tx_ring_head[0], tx_ring_tail[0]);
                     remove_tx_ring(&channel_TX[i], i);
                     send_TX_channel(i, &channel_TX[i]);
                     t_send_TX_channel = 0.4 * (micros() - t0_test) + 0.6 * t_send_TX_channel;
@@ -135,18 +141,19 @@ void unified_task(void *pvParameters)
 
         // Réception
         t0_test = micros();
-        receive_multi_RX_channels(nb_RX_channels, channel_RX);
+        uint8_t fifo_count[NB_RX_CHANNELS_MAX] = {0};
+        receive_multi_RX_channels(nb_RX_channels, channel_RX, fifo_count);
         for (int i = 0; i < nb_RX_channels; i++)
         {
-            if (channel_RX[i].timestamp != 0)
+            if (fifo_count[i] > 0)
             {
                 nb_mots_received++;
-                static uint32_t last_timestamp=0;
+                static uint32_t last_timestamp = 0;
                 channel_RX[i].timestamp = channel_RX[i].timestamp - offset_init - offset_loopback; // compensate for RX chain latency
-                last_timestamp=channel_RX[i].timestamp;
-                // Serial0.printf("A429 RX n°%d=0x%X ,t=%d\n", nb_mots_received, channel_RX[i].words, channel_RX[i].timestamp); // 04-07-2024
+                last_timestamp = channel_RX[i].timestamp;
+                // DEBUG_PORT.printf("A429 RX n°%d=0x%X ,t=%d\n", nb_mots_received, channel_RX[i].words, channel_RX[i].timestamp); // 04-07-2024
                 if (add_rx_ring(channel_RX[i], i) == -1)
-                    Serial0.println("xQueueSend channel_RX overflow");
+                    DEBUG_PORT.println("xQueueSend channel_RX overflow");
                 t_receive_channel = 0.4 * (micros() - t0_test) + 0.6 * t_receive_channel;
             }
         }
@@ -154,52 +161,71 @@ void unified_task(void *pvParameters)
         //==========================
         // Partie serie
         //==========================
-        if (Serial.available() >= sizeof(TRX_struct))
+        while (DATA_PORT.available() >= 9)
         {
             test++;
-            Serial.readBytes((char *)&Serial_TX_global, sizeof(TRX_struct));
-            // Serial0.printf("Serial TX n°%d: 0x%X, t0: %d, ch: %d\n", test, Serial_TX_global.words, Serial_TX_global.timestamp, Serial_TX_global.channel_number); // 04-07-2024
-            // TODO interpretation config si channel == 99
+            uint8_t array[9];
+            DATA_PORT.readBytes(array, 9);
+            Serial_TX_global.timestamp = array[0] | (array[1] << 8) | (array[2] << 16) | (array[3] << 24);
+            Serial_TX_global.channel_number = array[4];
+            Serial_TX_global.words = array[5] | (array[6] << 8) | (array[7] << 16) | (array[8] << 24);
+            // DEBUG_PORT.printf("Serial TX n°%d: 0x%X, t0: %d, ch: %d\n", test, Serial_TX_global.words, Serial_TX_global.timestamp, Serial_TX_global.channel_number); // 04-07-2024
+
             if (Serial_TX_global.channel_number < 8)
             {
                 if (add_tx_ring(Serial_TX_global, Serial_TX_global.channel_number) == -1)
                 {
-                    Serial0.println("add_tx_ring Serial_TX_global overflow");
-                    Serial0.printf("test=%d t_send_TX_channel=%d|t_receive_channel=%d|t_perfo=%d|t_perfo_max=%d\r\n", test, t_send_TX_channel, t_receive_channel, t_perfo, t_perfo_max);
-                    Serial0.printf("channel head=%d | channel tail=%d | remove_tx_count=%d| micros()-offset=%d\r\n", tx_ring_head[0], tx_ring_tail[0], remove_tx_count, micros() - offset_init);
+                    DEBUG_PORT.println("add_tx_ring Serial_TX_global overflow");
+                    DEBUG_PORT.printf("test=%d t_send_TX_channel=%d|t_receive_channel=%d|t_perfo=%d|t_perfo_max=%d\r\n", test, t_send_TX_channel, t_receive_channel, t_perfo, t_perfo_max);
+                    DEBUG_PORT.printf("channel head=%d | channel tail=%d | remove_tx_count=%d| micros()-offset=%d\r\n", tx_ring_head[0], tx_ring_tail[0], remove_tx_count, micros() - offset_init);
                     while (1)
                         delay(10);
                 }
             }
+            // TODO interpretation config si channel == 99
             else if (Serial_TX_global.channel_number == 99)
             {
                 // TODO interpreter la config
-                Serial0.println("Config Packet");
+                DEBUG_PORT.println("Config Packet");
                 offset_init = micros();
             }
         }
 
         // Réception
+        static uint32_t serial_rx_counter = 0;
         for (int i = 0; i < nb_RX_channels; i++)
         {
             if (remove_rx_ring(&Serial_RX_global, i) == 0)
             {
-                if (Serial.availableForWrite() == 0)
+                if (DATA_PORT.availableForWrite() == 0)
                 {
                     if (usb_error < 10)
                     {
-                        Serial0.println("no space for availableForWrite");
+                        DEBUG_PORT.println("no space for availableForWrite");
                     }
                     else if (usb_error == 10)
                     {
-                        Serial0.println("no space for availableForWrite ===========> TX LAST ERROR PRINTED");
+                        DEBUG_PORT.println("no space for availableForWrite ===========> TX LAST ERROR PRINTED");
                         while (1)
                             ;
                     }
                     usb_error++;
                 }
                 else
-                    Serial.write((uint8_t *)&Serial_RX_global, sizeof(TRX_struct));
+                {
+                    uint8_t array[9];
+                    array[0] = Serial_RX_global.timestamp & 0xFF;
+                    array[1] = (Serial_RX_global.timestamp >> 8) & 0xFF;
+                    array[2] = (Serial_RX_global.timestamp >> 16) & 0xFF;
+                    array[3] = (Serial_RX_global.timestamp >> 24) & 0xFF;
+                    array[4] = Serial_RX_global.channel_number;
+                    array[5] = (Serial_RX_global.words) & 0xFF;
+                    array[6] = (Serial_RX_global.words >> 8) & 0xFF;
+                    array[6] = (Serial_RX_global.words >> 16) & 0xFF;
+                    array[6] = (Serial_RX_global.words >> 24) & 0xFF;
+                    DATA_PORT.write(array, 9);
+                    serial_rx_counter++;
+                }
             }
         }
 
@@ -213,11 +239,11 @@ void unified_task(void *pvParameters)
         {
             t0 = millis();
             vTaskDelay(1);
-            flag_perfo ++;
+            flag_perfo++;
             if (flag_perfo == 2)
             {
-                flag_perfo=0;
-                Serial0.printf("test=%d t_send_TX_channel=%d|t_receive_channel=%d|t_perfo=%d|t_perfo_max=%d\r\n", test, t_send_TX_channel, t_receive_channel, t_perfo, t_perfo_max);
+                flag_perfo = 0;
+                DEBUG_PORT.printf("test=%d serial_rx=%d|t_send_TX_channel=%d|t_receive_channel=%d|t_perfo=%d|t_perfo_max=%d\r\n", test, serial_rx_counter, t_send_TX_channel, t_receive_channel, t_perfo, t_perfo_max);
             }
         }
     }
