@@ -7,8 +7,8 @@ import numpy
 import matplotlib.pyplot as plt
 import threading
 
-data_format_OUTPUT = '<IBI'
-data_format_INPUT = '<3I'
+# data_format_OUTPUT = '<IBI'
+data_format_OUTPUT = '<3I'
 
 import sys
 import os
@@ -78,7 +78,6 @@ def send_receive(nb_structs,list_csv_output,list_csv_input) :
     # print("Nombre de mots à envoyer :", i_send_end)
     i_send = 0
     print("BEGIN EMISSION")
-    delta_sleep=0
     while(i_send<i_send_end):
         #f ((temp_timestamp) >= (offset_init - offset_send_delay + peek_struct_A429.timestamp))
         if(int(time.time()*1e6)>= list_csv_input[i_send][0] + offset_RPi - 10*1000): #send words Xms before timestamp
@@ -97,7 +96,7 @@ def send_receive(nb_structs,list_csv_output,list_csv_input) :
     print("done reading ",i_rcv/12 ," structs from serial while sending")
 
     t0=time.time()
-    while(i_rcv<nb_to_read and (time.time()-t0)<2):
+    while(i_rcv<nb_to_read and (time.time()-t0)<1):
         if(ser.in_waiting > 0):
             t0=time.time()
             s=ser.read(ser.in_waiting)
@@ -112,14 +111,14 @@ def send_receive(nb_structs,list_csv_output,list_csv_input) :
     ##
     list_csv_output.append(["Horodatage","Channel","Mot_A429"])
     i=0
-    packet_size=9
+    packet_size=12
     while(i<nb_structs):
         index=(i*packet_size)
         data = serial_data_array[index:(index+packet_size)]
-        # print(data)
+        #print(data)
         timestamp=int.from_bytes(data[0:4],'little',signed=False)
-        channel=data[4]
-        a429_data=int.from_bytes(data[5:9],'little',signed=False)
+        channel=int.from_bytes(data[4:8],'little',signed=False)
+        a429_data=int.from_bytes(data[8:12],'little',signed=False)
         list_datahex=[str(timestamp),str(channel),str(hex(a429_data)[2:].upper().zfill(8))]
         list_csv_output.append(list_datahex)
         i=i+1    
@@ -141,7 +140,7 @@ convert_data_types(list_words_input)
 
 # Initialisation du port série
 print("Ouverture serial") 
-ser = serial.Serial('/dev/ttyUSB0', 2200000,timeout=None)
+ser = serial.Serial('/dev/ttyACM0', 2200000,timeout=1)
 
 ser.reset_output_buffer()
 ser.reset_input_buffer()

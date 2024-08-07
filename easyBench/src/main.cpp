@@ -62,37 +62,32 @@ void calibration_loopback_offset()
       }
     }
   }
-  DEBUG_PORT.printf("Loopback offset full chain TX->RX =%dus (max=%dus/min=%dus) --> corrected for A429 word(320us)=%dus\n\r", offset_loopback, offset_loopback_max, offset_loopback_min, offset_loopback - 320);
+  Serial0.printf("Loopback offset full chain TX->RX =%dus (max=%dus/min=%dus) --> corrected for A429 word(320us)=%dus\n\r", offset_loopback, offset_loopback_max, offset_loopback_min, offset_loopback - 320);
   offset_loopback = offset_loopback - 320;
 }
 
 void setup()
 {
   // -------------INIT CONFIG-------------
-  DATA_PORT.setTxBufferSize(QUEUE_LEN * 4 * 3);
-  DATA_PORT.setRxBufferSize(QUEUE_LEN * 4 * 3);
+  Serial.setTxBufferSize(QUEUE_LEN * 4 * 3);
+  Serial.setRxBufferSize(QUEUE_LEN * 4 * 3);
 
-  DATA_PORT.begin(2200000);
+  Serial.begin(2200000);
 
-  DEBUG_PORT.begin(2200000);
-  DEBUG_PORT.setDebugOutput(1);
-  DEBUG_PORT.println("DEBUG_PORT started");
+  Serial0.begin(2200000);
+  Serial0.setDebugOutput(1);
+  Serial0.println("Serial0 started");
   config_HI3220(40e6, MSBFIRST, SPI_MODE0);
   config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, HS, HS);
   offset_init = micros();
-  DEBUG_PORT.printf("TRX struct size=%d\r\n", sizeof(TRX_struct));
+  Serial0.printf("TRX struct size=%d\r\n", sizeof(TRX_struct));
   calibration_loopback_offset();
   //------------SUGGESTION--------------
   while (1)
   {
-    if (DATA_PORT.available() >= 9)
+    if (Serial.available() >= sizeof(TRX_struct))
     {
-      //==========================
-      uint8_t array[9];
-      DATA_PORT.readBytes(array, 9);
-      Serial_TX_global.timestamp = array[0] | (array[1] << 8) | (array[2] << 16) | (array[3] << 24);
-      Serial_TX_global.channel_number = array[4];
-      Serial_TX_global.words = array[5] | (array[6] << 8) | (array[7] << 16) | (array[8] << 24);
+      Serial.readBytes((char *)&Serial_TX_global, sizeof(TRX_struct));
 
       if (Serial_TX_global.channel_number == 99)
       {
@@ -128,14 +123,14 @@ void setup()
           nb_RX_channels = NB_RX_CHANNELS_MAX;
           nb_TX_channels = NB_TX_CHANNELS_MAX;
           config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, HS, HS);
-          DEBUG_PORT.println("config done");
+          Serial0.println("config done");
           break;
         }
       }
       break;
     }
   }
-  DEBUG_PORT.println("Done config");
+  Serial0.println("Done config");
   //------------SUGGESTION--------------
 
   // test.channel_number = 0;  //04-07-2024

@@ -4,8 +4,6 @@
 
 #include <ll_HI3220_SPI_com.hpp>
 
-#define DEBUG_PORT Serial
-#define DATA_PORT Serial0
 
 void init_queue_mutex();
 

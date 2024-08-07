@@ -370,7 +370,7 @@ def sim_timestamp_A429(input_csv, output_csv):
 
 if(0):
     delete_files('input_files')
-    generate_multi_csv_input(100, 361, 0, 3, 'HS')
+    generate_multi_csv_input(1000, 5000, 0, 1, 'HS')
 
     fusion_csv_files('input_files','fusion_input_file/input_file.csv')
 else :
