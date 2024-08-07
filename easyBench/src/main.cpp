@@ -1,134 +1,161 @@
-#include "hl_A429_SPI_configuration.hpp"
-#include "hl_A429_SPI_receive.hpp"
-#include "hl_A429_SPI_transmit.hpp"
-#include "hl_A429_SPI_debug.hpp"
+#include <A429_config.hpp>
+#include <ll_HI3220_SPI_com.hpp>
+#include <core_task_unified.hpp>
+#include <A429_timestamp.hpp>
+#include <A429_RX.hpp>
+#include <A429_TX.hpp>
 
-#include "hl_communication_core_task.hpp"
-#include "hl_A429_core_task.hpp"
+void receive_A429_word(unsigned char channel, TRX_struct *RX_struct);
 
-// put function declarations here:
-// // Niveau au-dessus (A faire après les vacances)
-// // Optimiser le code (uniformiser les types de variables)
+#define STACK_SIZE 8192
+StaticTask_t xTaskBuffer;
+StackType_t xStack[STACK_SIZE]; // 8bit type
 
-TRX_struct channel_RX[NB_RX_CHANNELS];
-TRX_struct channel_TX[NB_TX_CHANNELS];
-
-TRX_struct_test Serial_TX_global;
+TRX_struct Serial_TX_global;
 TRX_struct Serial_RX_global;
-TRX_struct channel_TX_global;
-TRX_struct channel_RX_global;
 
-QueueHandle_t queue_RX[NB_RX_CHANNELS];
-QueueHandle_t queue_TX[NB_TX_CHANNELS];
-QueueHandle_t queue_TX_global;
-QueueHandle_t queue_RX_global;
+TRX_struct channel_TX[NB_TX_CHANNELS_MAX];
+TRX_struct channel_RX[NB_RX_CHANNELS_MAX];
 
-TRX_struct_test channel_RX_test[NB_RX_CHANNELS];
-TRX_struct_test channel_TX_test[NB_TX_CHANNELS];
-TRX_struct_test test;
-TRX_struct_test peek_struct_main;
+uint32_t offset_loopback; // time it takes to go from rx to tx on loopback
 
-xSemaphoreHandle mutex_RX=NULL,mutex_TX=NULL;
+extern uint32_t offset_init;
 
-int offset = 0;
+unsigned int nb_RX_channels = 1;
+unsigned int nb_TX_channels = 1;
+
+void calibration_loopback_offset()
+{
+  uint32_t offset_calib = 0;
+  TRX_struct dummy_tx;
+  TRX_struct dummy_rx;
+
+  uint32_t offset_loopback_max=0;
+  uint32_t offset_loopback_min=9999;
+
+  dummy_tx.channel_number = 0;
+  dummy_tx.words = 0xAA55BABE;
+  for (int i = 0; i < 200; i++)
+  {
+    uint32_t temp_timestamp;
+    get_timestamp(&temp_timestamp);
+    send_TX_channel(0, &dummy_tx);
+    offset_calib = micros();
+    while (1)
+    {
+      receive_A429_word(0, &dummy_rx);
+      if (dummy_rx.timestamp != 0)
+      {
+        dummy_rx.timestamp = dummy_rx.timestamp - offset_calib;
+        offset_loopback = 0.5 * dummy_rx.timestamp + 0.5 * offset_loopback;
+        if (offset_loopback > offset_loopback_max)
+          offset_loopback_max = offset_loopback;
+        else if (offset_loopback < offset_loopback_min)
+          offset_loopback_min = offset_loopback;
+        break;
+      }
+    }
+  }
+  Serial0.printf("Loopback offset full chain TX->RX =%dus (max=%dus/min=%dus) --> corrected for A429 word(320us)=%dus\n\r", offset_loopback, offset_loopback_max, offset_loopback_min, offset_loopback - 320);
+  offset_loopback = offset_loopback - 320;
+}
+
 void setup()
 {
-  // put your setup code here, to run once:
   // -------------INIT CONFIG-------------
-  Serial.begin(460800);
-  Serial.setRxBufferSize(4096);
-  config_SPI2(40e6, MSBFIRST, SPI_MODE0);
-  // config_TRX2(TRX, NB_RX_CHANNELS, NB_TX_CHANNELS, channel_RX, channel_TX);
-  config_TRX3(TRX, NB_RX_CHANNELS, NB_TX_CHANNELS, channel_RX_test, channel_TX_test);
-  queue_TX_global = xQueueCreate(64 * 8, sizeof(TRX_struct));
-  queue_RX_global = xQueueCreate(64 * 16, sizeof(TRX_struct));
-  for (int i = 0; i < NB_RX_CHANNELS; i++)
-  {
-    queue_RX[i] = xQueueCreate(64, sizeof(TRX_struct_test));
-  }
-  for (int i = 0; i < NB_TX_CHANNELS; i++)
-  {
-    queue_TX[i] = xQueueCreate(64, sizeof(TRX_struct_test));
-  }
-  Serial.setTimeout(1);
-  offset = micros();
+  Serial.setTxBufferSize(QUEUE_LEN * 4 * 3);
+  Serial.setRxBufferSize(QUEUE_LEN * 4 * 3);
 
-  mutex_RX=xSemaphoreCreateMutex();
-  mutex_TX=xSemaphoreCreateMutex();
+  Serial.begin(3000000);
 
-  xTaskCreatePinnedToCore(a429_communication_task,
-                          "a429_communication",
-                          8192,
-                          NULL,
-                          1,
-                          NULL,
-                          0);
-  xTaskCreatePinnedToCore(serial_communication_task,
-                          "serial_task",
-                          8192,
-                          NULL,
-                          1,
-                          NULL,
-                          1);
+  Serial0.begin(3000000);
+  Serial0.setDebugOutput(1);
+  Serial0.println("Serial0 started");
+  config_HI3220(40e6, MSBFIRST, SPI_MODE0);
+  config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, HS, HS);
+  offset_init = micros();
+
+  calibration_loopback_offset();
+  //------------SUGGESTION--------------
+  while (1)
+  {
+    if (Serial.available() >= sizeof(TRX_struct))
+    {
+      Serial.readBytes((char *)&Serial_TX_global, sizeof(TRX_struct));
+      if (Serial_TX_global.channel_number == 99)
+      {
+        offset_init = micros();
+        switch (Serial_TX_global.words)
+        {
+        case 0xFFFFFFFF: // Activer toutes les voies en HS
+          offset_init = micros();
+          nb_RX_channels = NB_RX_CHANNELS_MAX;
+          nb_TX_channels = NB_TX_CHANNELS_MAX;
+          config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, HS, HS);
+          break;
+        case 0xAAAAAAAA: // Activer 1 voie RX et 1 voie TX en HS
+          offset_init = micros();
+          nb_RX_channels = 1;
+          nb_TX_channels = 1;
+          config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, HS, HS);
+          break;
+        case 0xBBBBBBBB: // Activer toutes les voies en LS
+          offset_init = micros();
+          nb_RX_channels = NB_RX_CHANNELS_MAX;
+          nb_TX_channels = NB_TX_CHANNELS_MAX;
+          config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, LS, LS);
+          break;
+        case 0xCCCCCCCC: // Activer 1 voie RX et 1 voie TX en HS
+          offset_init = micros();
+          nb_RX_channels = 1;
+          nb_TX_channels = 1;
+          config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, LS, LS);
+          break;
+        default: // Activer toutes les voies en HS
+          offset_init = micros();
+          nb_RX_channels = NB_RX_CHANNELS_MAX;
+          nb_TX_channels = NB_TX_CHANNELS_MAX;
+          config_TRX(TRX, nb_RX_channels, nb_TX_channels, channel_RX, channel_TX, HS, HS);
+          Serial0.println("config done");
+          break;
+        }
+      }
+      break;
+    }
+  }
+  Serial0.println("Done config");
+  //------------SUGGESTION--------------
+
+  // test.channel_number = 0;  //04-07-2024
+  // test.timestamp = offset + 1000000;  //04-07-2024
+  // test.words = 0xCAFEBABE;  //04-07-2024
+  // xQueueSend(queue_TX[Serial_TX_global.channel_number], &test, 0);  //04-07-2024
+
+  // xTaskCreatePinnedToCore(a429_communication_task,
+  //                         "a429_communication",
+  //                         8192,
+  //                         NULL,
+  //                         5,
+  //                         NULL,
+  //                         tskNO_AFFINITY);
+  // xTaskCreatePinnedToCore(Serial_communication_task,
+  //                         "Serial_task",
+  //                         8192,
+  //                         NULL,
+  //                         4,
+  //                         NULL,
+  //                         tskNO_AFFINITY);
+  xTaskCreateStatic(unified_task,
+                    "unified_task",
+                    STACK_SIZE,
+                    NULL,
+                    25,
+                    xStack,
+                    &xTaskBuffer);
+  
+  vTaskDelete(NULL);
 }
-unsigned int i = 0;
 
 void loop()
 {
-  // put your main code here, to run repeatedly:
-
-  // TASK COMMUNICATION
-  // // Emission
-  // if (Serial.available() >= sizeof(TRX_struct_test))
-  // {
-  //   Serial.readBytes((char *)&Serial_TX_global, sizeof(TRX_struct_test));
-  //   if (Serial_TX_global.channel_number == 99)
-  //   {
-  //     offset = micros();
-  //   }
-  //   else if (Serial_TX_global.channel_number < 8)
-  //   {
-  //     xQueueSend(queue_TX[Serial_TX_global.channel_number], &Serial_TX_global, 0);
-  //   }
-  // }
-
-  // // Réception
-  // for (int i = 0; i < 1; i++)
-  // {
-  //   if (channel_RX_test[i].timestamp != 0)
-  //   {
-  //     Serial.write((uint8_t *)&channel_RX_test[i], sizeof(channel_RX_test[i]));
-  //   }
-  // }
-
-  //  a429_communication(queue_TX, peek_struct, offset, channel_TX_test, channel_RX_test);
-
-  // TASK A429
-  // // Emission
-  // for(int i = 0; i < 1; i++)
-  // {
-  //   if (xQueuePeek(queue_TX[i], &peek_struct_main, 0) == pdTRUE)
-  //   {
-  //     uint32_t temp_timestamp;
-  //     get_timestamp(&temp_timestamp);
-  //     if (peek_struct_main.timestamp <= (temp_timestamp - 10 - offset))
-  //     {
-  //       xQueueReceive(queue_TX[i], &channel_TX_test[i], 0);
-  //       send_multi_TX_channels2(1, &channel_TX_test[i]);
-  //     }
-  //   }
-  // }
-
-  // // Réception
-  // read_multi_RX_channels2(1, channel_RX_test);
-  // if (channel_RX_test[0].timestamp != 0)
-  // {
-  //   // Serial.printf("le timestamp : %d\n", channel_RX_test[0].timestamp);
-  //   // Serial.printf("le channel : %d\n", channel_RX_test[0].channel_number);
-  //   // Serial.printf("le mot : %X\n", channel_RX_test[0].words);
-  //   channel_RX_test[0].timestamp = channel_RX_test[0].timestamp - offset;
-  //   // Serial.write((uint8_t *)&channel_RX_test[0], sizeof(channel_RX_test[0]));
-  // }
-  i++;
-  delay(100);
 }
