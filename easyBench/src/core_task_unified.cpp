@@ -165,7 +165,7 @@ void unified_task(void *pvParameters)
         {
             test++;
             Serial.readBytes((char *)&Serial_TX_global, sizeof(TRX_struct));
-            //Serial0.printf("Serial TX n°%d: 0x%X, t0: %d, ch: %d\n", test, Serial_TX_global.words, Serial_TX_global.timestamp, Serial_TX_global.channel_number); // 04-07-2024
+            // Serial0.printf("Serial TX n°%d: 0x%X, t0: %d, ch: %d\n", test, Serial_TX_global.words, Serial_TX_global.timestamp, Serial_TX_global.channel_number); // 04-07-2024
 
             if (Serial_TX_global.channel_number < 8)
             {

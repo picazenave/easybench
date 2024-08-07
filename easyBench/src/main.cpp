@@ -69,8 +69,8 @@ void calibration_loopback_offset()
 void setup()
 {
   // -------------INIT CONFIG-------------
-  Serial.setTxBufferSize(QUEUE_LEN * 4 * 3);
-  Serial.setRxBufferSize(QUEUE_LEN * 4 * 3);
+  // Serial.setTxBufferSize(QUEUE_LEN * 4 * 3);
+  // Serial.setRxBufferSize(QUEUE_LEN * 4 * 3);
 
   Serial.begin(2200000);
 

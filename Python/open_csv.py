@@ -89,8 +89,9 @@ def send_receive(nb_structs,list_csv_output,list_csv_input) :
         if(ser.in_waiting > 0):
             s=ser.read(ser.in_waiting)
             n_read=len(s)
-            serial_data_array.extend(s)
+            serial_data_array.append(s)
             i_rcv=i_rcv+n_read
+            
 
     print("END EMISSION")
     print("done reading ",i_rcv/12 ," structs from serial while sending")
@@ -101,11 +102,11 @@ def send_receive(nb_structs,list_csv_output,list_csv_input) :
             t0=time.time()
             s=ser.read(ser.in_waiting)
             n_read=len(s)
-            serial_data_array.extend(s)
+            serial_data_array.append(s)
             i_rcv=i_rcv+n_read  
     # print("i_rcv=",i_rcv," nb to read",nb_to_read)
     print("done reading ",i_rcv/12 ," structs from serial")
-
+    serial_data_array=b''.join(serial_data_array)
     ##
     ## Decode received packets
     ##

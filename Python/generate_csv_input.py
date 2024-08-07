@@ -150,7 +150,7 @@ def generate_csv_input_HS_timestamp(csv_file_input, nb_words, timestamp, channel
         list_csv_input[0][2] = "Mot_A429"
         for i in range(1, len(list_csv_input)):
             if(i==1):
-                list_csv_input[i][0] = first_value_timestamp
+                list_csv_input[i][0] = first_value_timestamp+channel*133
                 list_csv_input[i][1] = channel
                 list_csv_input[i][2] = ((hex(random.randrange(0,int_size_max, 1)).upper())[2:]).zfill(8)
             else:
@@ -370,7 +370,7 @@ def sim_timestamp_A429(input_csv, output_csv):
 
 if(0):
     delete_files('input_files')
-    generate_multi_csv_input(1000, 5000, 0, 1, 'HS')
+    generate_multi_csv_input(1000, 1000, 0, 1, 'HS')
 
     fusion_csv_files('input_files','fusion_input_file/input_file.csv')
 else :
